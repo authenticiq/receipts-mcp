@@ -23,7 +23,8 @@ This repo is the integration surface that emits receipts from MCP tool traffic.
 
 ## Current validation baseline
 
-- `../.tools/gitleaks dir . --config gitleaks.toml`
+- `bash .github/scripts/check-baseline.sh`
+- `gitleaks dir . --config gitleaks.toml`
 
 ## Target validation baseline once implementation lands
 

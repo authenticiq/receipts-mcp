@@ -1,15 +1,30 @@
-name: gitleaks
+name: ci
 
 on:
   push:
-    branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  scan:
+  baseline:
+    name: repo-baseline
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check scaffold baseline
+        run: bash .github/scripts/check-baseline.sh
+
+  gitleaks:
+    name: gitleaks
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
