@@ -1,0 +1,23 @@
+# Node
+/node_modules
+/dist
+/coverage
+
+# Package managers
+package-lock.json
+pnpm-lock.yaml
+
+# Editors / OS
+.DS_Store
+.idea
+.vscode
+
+# Secrets / local config
+.env
+.env.*
+*.pem
+*.key
+
+# Reports
+*.sarif
+*.log
