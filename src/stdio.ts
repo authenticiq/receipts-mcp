@@ -11,11 +11,27 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import {
   CallToolRequestSchema,
   CallToolResultSchema,
+  GetPromptRequestSchema,
+  ListPromptsRequestSchema,
+  ListResourceTemplatesRequestSchema,
+  ListResourcesRequestSchema,
   ListToolsRequestSchema,
+  ReadResourceRequestSchema,
   type CallToolRequest,
   type CallToolResult,
+  type GetPromptRequest,
+  type GetPromptResult,
+  type ListPromptsRequest,
+  type ListPromptsResult,
+  type ListResourceTemplatesRequest,
+  type ListResourceTemplatesResult,
+  type ListResourcesRequest,
+  type ListResourcesResult,
   type ListToolsRequest,
   type ListToolsResult,
+  type ReadResourceRequest,
+  type ReadResourceResult,
+  type ServerCapabilities,
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { loadConfigFromEnv } from './config.js';
@@ -50,14 +66,24 @@ function normalizeEnv(env?: Record<string, string>): Record<string, string> | un
   return inherited;
 }
 
-export interface UpstreamToolClient {
+export interface UpstreamMcpClient {
   connect(): Promise<void>;
+  getServerCapabilities(): ServerCapabilities | undefined;
   listTools(params?: ListToolsRequest['params']): Promise<ListToolsResult>;
   callTool(call: ToolCallContext): Promise<ToolCallResult>;
+  listPrompts(params?: ListPromptsRequest['params']): Promise<ListPromptsResult>;
+  getPrompt(params: GetPromptRequest['params']): Promise<GetPromptResult>;
+  listResources(params?: ListResourcesRequest['params']): Promise<ListResourcesResult>;
+  listResourceTemplates(
+    params?: ListResourceTemplatesRequest['params'],
+  ): Promise<ListResourceTemplatesResult>;
+  readResource(params: ReadResourceRequest['params']): Promise<ReadResourceResult>;
   close(): Promise<void>;
 }
 
-export class StdioUpstreamMcpClient implements UpstreamToolClient {
+export type UpstreamToolClient = UpstreamMcpClient;
+
+export class StdioUpstreamMcpClient implements UpstreamMcpClient {
   private readonly client = new Client(
     {
       name: 'receipts-mcp-upstream-client',
@@ -87,9 +113,40 @@ export class StdioUpstreamMcpClient implements UpstreamToolClient {
     this.connected = true;
   }
 
+  getServerCapabilities(): ServerCapabilities | undefined {
+    return this.client.getServerCapabilities();
+  }
+
   async listTools(params?: ListToolsRequest['params']): Promise<ListToolsResult> {
     await this.connect();
     return this.client.listTools(params);
+  }
+
+  async listPrompts(params?: ListPromptsRequest['params']): Promise<ListPromptsResult> {
+    await this.connect();
+    return this.client.listPrompts(params);
+  }
+
+  async getPrompt(params: GetPromptRequest['params']): Promise<GetPromptResult> {
+    await this.connect();
+    return this.client.getPrompt(params);
+  }
+
+  async listResources(params?: ListResourcesRequest['params']): Promise<ListResourcesResult> {
+    await this.connect();
+    return this.client.listResources(params);
+  }
+
+  async listResourceTemplates(
+    params?: ListResourceTemplatesRequest['params'],
+  ): Promise<ListResourceTemplatesResult> {
+    await this.connect();
+    return this.client.listResourceTemplates(params);
+  }
+
+  async readResource(params: ReadResourceRequest['params']): Promise<ReadResourceResult> {
+    await this.connect();
+    return this.client.readResource(params);
   }
 
   async callTool(call: ToolCallContext): Promise<ToolCallResult> {
@@ -123,56 +180,123 @@ export interface ReceiptsProxyServerOptions {
 }
 
 export class TransparentToolProxyServer {
-  readonly server: Server;
+  private serverInstance?: Server;
   private readonly shim: ReceiptingShim;
+  private readonly serverInfo: {
+    name: string;
+    version: string;
+  };
+  private readonly serverOptions: ServerOptions;
+
+  get server(): Server {
+    if (!this.serverInstance) {
+      throw new Error('Proxy server is not connected yet.');
+    }
+
+    return this.serverInstance;
+  }
 
   constructor(
     private readonly config: ReceiptsMcpConfig,
-    private readonly upstream: UpstreamToolClient,
+    private readonly upstream: UpstreamMcpClient,
     options: ReceiptsProxyServerOptions = {},
   ) {
-    this.server = new Server(
-      options.serverInfo ?? {
-        name: 'receipts-mcp',
-        version: '0.1.0-internal.0',
-      },
-      {
-        capabilities: {
-          tools: {
-            listChanged: false,
-          },
-        },
-        instructions:
-          'Transparent MCP tool proxy that emits signed receipts for every upstream tool call.',
-        ...(options.serverOptions ?? {}),
-      },
-    );
-
+    this.serverInfo = options.serverInfo ?? {
+      name: 'receipts-mcp',
+      version: '0.1.0-internal.0',
+    };
+    this.serverOptions = options.serverOptions ?? {};
     this.shim = new ReceiptingShim(this.config, (call) => this.upstream.callTool(call), options.sinks);
-    this.server.setRequestHandler(ListToolsRequestSchema, async (request) => this.upstream.listTools(request.params));
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
-      const response = await this.shim.callTool({
-        name: request.params.name,
-        arguments: request.params.arguments as ToolCallContext['arguments'],
-      });
+  }
 
-      return response.result as CallToolResult;
+  private createServerCapabilities(upstreamCapabilities?: ServerCapabilities): ServerCapabilities {
+    const capabilities: ServerCapabilities = {};
+
+    if (!upstreamCapabilities || upstreamCapabilities.tools) {
+      capabilities.tools = {
+        listChanged: upstreamCapabilities?.tools?.listChanged ?? false,
+      };
+    }
+
+    if (upstreamCapabilities?.prompts) {
+      capabilities.prompts = {
+        listChanged: upstreamCapabilities.prompts.listChanged ?? false,
+      };
+    }
+
+    if (upstreamCapabilities?.resources) {
+      capabilities.resources = {
+        listChanged: upstreamCapabilities.resources.listChanged ?? false,
+        subscribe: false,
+      };
+    }
+
+    return capabilities;
+  }
+
+  private createServer(): Server {
+    const derivedCapabilities = this.createServerCapabilities(this.upstream.getServerCapabilities());
+    const capabilities = {
+      ...derivedCapabilities,
+      ...(this.serverOptions.capabilities ?? {}),
+    };
+    const server = new Server(this.serverInfo, {
+      ...this.serverOptions,
+      capabilities,
+      instructions:
+        this.serverOptions.instructions ??
+        'Transparent MCP proxy that forwards tool, prompt, and resource traffic while emitting signed receipts for upstream tool calls.',
     });
+
+    if (capabilities.tools) {
+      server.setRequestHandler(ListToolsRequestSchema, async (request) => this.upstream.listTools(request.params));
+      server.setRequestHandler(CallToolRequestSchema, async (request) => {
+        const response = await this.shim.callTool({
+          name: request.params.name,
+          arguments: request.params.arguments as ToolCallContext['arguments'],
+        });
+
+        return response.result as CallToolResult;
+      });
+    }
+
+    if (capabilities.prompts) {
+      server.setRequestHandler(ListPromptsRequestSchema, async (request) => this.upstream.listPrompts(request.params));
+      server.setRequestHandler(GetPromptRequestSchema, async (request) => this.upstream.getPrompt(request.params));
+    }
+
+    if (capabilities.resources) {
+      server.setRequestHandler(ListResourcesRequestSchema, async (request) => this.upstream.listResources(request.params));
+      server.setRequestHandler(ListResourceTemplatesRequestSchema, async (request) =>
+        this.upstream.listResourceTemplates(request.params),
+      );
+      server.setRequestHandler(ReadResourceRequestSchema, async (request) => this.upstream.readResource(request.params));
+    }
+
+    return server;
   }
 
   async connect(transport: Transport): Promise<void> {
     await this.upstream.connect();
+    if (!this.serverInstance) {
+      this.serverInstance = this.createServer();
+    }
+
     await this.server.connect(transport);
   }
 
   async close(): Promise<void> {
-    await this.server.close();
+    if (this.serverInstance) {
+      await this.serverInstance.close();
+      this.serverInstance = undefined;
+    }
+
     await this.upstream.close();
   }
 
   static createInMemoryPair(
     config: ReceiptsMcpConfig,
-    upstream: UpstreamToolClient,
+    upstream: UpstreamMcpClient,
     options: ReceiptsProxyServerOptions = {},
   ): [TransparentToolProxyServer, InMemoryTransport, InMemoryTransport] {
     const proxy = new TransparentToolProxyServer(config, upstream, options);

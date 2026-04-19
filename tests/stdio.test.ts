@@ -58,7 +58,7 @@ function createTestConfig(): ReceiptsMcpConfig {
 }
 
 describe('stdio forwarding', () => {
-  it('lists and calls tools through a spawned stdio upstream server', async () => {
+  it('lists and fetches tools, prompts, and resources through a spawned stdio upstream server', async () => {
     const upstream = new StdioUpstreamMcpClient({
       command: process.execPath,
       args: [fixturePath],
@@ -67,8 +67,47 @@ describe('stdio forwarding', () => {
     });
 
     try {
+      await upstream.connect();
+
+      const capabilities = upstream.getServerCapabilities();
+      expect(capabilities?.tools).toBeDefined();
+      expect(capabilities?.prompts).toBeDefined();
+      expect(capabilities?.resources).toBeDefined();
+
       const tools = await upstream.listTools();
       expect(tools.tools.map((tool) => tool.name)).toContain('echo');
+
+      const prompts = await upstream.listPrompts();
+      expect(prompts.prompts.map((prompt) => prompt.name)).toContain('greeting-template');
+
+      const prompt = await upstream.getPrompt({
+        name: 'greeting-template',
+        arguments: {
+          name: 'Ada',
+        },
+      });
+      expect(prompt.messages[0]?.content).toMatchObject({
+        type: 'text',
+        text: 'Please greet Ada in a friendly manner.',
+      });
+
+      const resources = await upstream.listResources();
+      expect(resources.resources.map((resource) => resource.uri)).toContain(
+        'https://example.com/greetings/default',
+      );
+
+      const templates = await upstream.listResourceTemplates();
+      expect(templates.resourceTemplates.map((template) => template.uriTemplate)).toContain('memo:///notes/{slug}');
+
+      const resource = await upstream.readResource({
+        uri: 'memo:///notes/example',
+      });
+      expect(resource.contents).toContainEqual(
+        expect.objectContaining({
+          uri: 'memo:///notes/example',
+          text: 'note:example',
+        }),
+      );
 
       const result = await upstream.callTool({
         name: 'echo',
@@ -85,7 +124,7 @@ describe('stdio forwarding', () => {
     }
   });
 
-  it('proxies tools/list and tools/call through the transparent server', async () => {
+  it('proxies tools, prompts, and resources through the transparent server', async () => {
     const upstream = new StdioUpstreamMcpClient({
       command: process.execPath,
       args: [fixturePath],
@@ -107,8 +146,50 @@ describe('stdio forwarding', () => {
       await proxy.connect(serverTransport);
       await client.connect(clientTransport);
 
+      const capabilities = client.getServerCapabilities();
+      expect(capabilities?.tools).toBeDefined();
+      expect(capabilities?.prompts).toBeDefined();
+      expect(capabilities?.resources).toEqual(
+        expect.objectContaining({
+          subscribe: false,
+        }),
+      );
+
       const tools = await client.listTools();
       expect(tools.tools.map((tool) => tool.name)).toContain('echo');
+
+      const prompts = await client.listPrompts();
+      expect(prompts.prompts.map((prompt) => prompt.name)).toContain('greeting-template');
+
+      const prompt = await client.getPrompt({
+        name: 'greeting-template',
+        arguments: {
+          name: 'Grace',
+        },
+      });
+      expect(prompt.messages[0]?.content).toMatchObject({
+        type: 'text',
+        text: 'Please greet Grace in a friendly manner.',
+      });
+
+      const resources = await client.listResources();
+      expect(resources.resources.map((resource) => resource.uri)).toContain(
+        'https://example.com/greetings/default',
+      );
+
+      const templates = await client.listResourceTemplates();
+      expect(templates.resourceTemplates.map((template) => template.uriTemplate)).toContain('memo:///notes/{slug}');
+
+      const resource = await client.readResource({
+        uri: 'memo:///notes/proxy',
+      });
+      expect(resource.contents).toContainEqual(
+        expect.objectContaining({
+          uri: 'memo:///notes/proxy',
+          text: 'note:proxy',
+        }),
+      );
+      expect(sink.receipts).toHaveLength(0);
 
       const result = await client.callTool({
         name: 'echo',

@@ -1,6 +1,6 @@
 # receipts-mcp
 
-MCP middleware that emits signed receipts for every tool call.
+MCP middleware that emits signed receipts for tool calls while transparently forwarding broader MCP server traffic.
 
 ## Status
 
@@ -11,7 +11,7 @@ Current internal surface:
 - ML-DSA-87 signing aligned to `agent-receipts/v1`
 - stdout, file, HTTP, and local git sinks
 - stdio upstream forwarding via the MCP TypeScript SDK
-- a transparent tool proxy server for `tools/list` and `tools/call`
+- transparent proxying for `tools/list`, `tools/call`, `prompts/list`, `prompts/get`, `resources/list`, `resources/templates/list`, and `resources/read`
 
 Still in progress:
 - broader MCP transport coverage beyond stdio
