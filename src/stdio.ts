@@ -11,14 +11,22 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import {
   CallToolRequestSchema,
   CallToolResultSchema,
+  EmptyResultSchema,
   GetPromptRequestSchema,
   ListPromptsRequestSchema,
+  PromptListChangedNotificationSchema,
+  ResourceListChangedNotificationSchema,
   ListResourceTemplatesRequestSchema,
   ListResourcesRequestSchema,
   ListToolsRequestSchema,
   ReadResourceRequestSchema,
+  ResourceUpdatedNotificationSchema,
+  SubscribeRequestSchema,
+  ToolListChangedNotificationSchema,
+  UnsubscribeRequestSchema,
   type CallToolRequest,
   type CallToolResult,
+  type EmptyResult,
   type GetPromptRequest,
   type GetPromptResult,
   type ListPromptsRequest,
@@ -31,7 +39,10 @@ import {
   type ListToolsResult,
   type ReadResourceRequest,
   type ReadResourceResult,
+  type ResourceUpdatedNotification,
   type ServerCapabilities,
+  type SubscribeRequest,
+  type UnsubscribeRequest,
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { loadConfigFromEnv } from './config.js';
@@ -69,6 +80,7 @@ function normalizeEnv(env?: Record<string, string>): Record<string, string> | un
 export interface UpstreamMcpClient {
   connect(): Promise<void>;
   getServerCapabilities(): ServerCapabilities | undefined;
+  setNotificationHandlers(handlers: UpstreamMcpNotificationHandlers): void;
   listTools(params?: ListToolsRequest['params']): Promise<ListToolsResult>;
   callTool(call: ToolCallContext): Promise<ToolCallResult>;
   listPrompts(params?: ListPromptsRequest['params']): Promise<ListPromptsResult>;
@@ -78,7 +90,16 @@ export interface UpstreamMcpClient {
     params?: ListResourceTemplatesRequest['params'],
   ): Promise<ListResourceTemplatesResult>;
   readResource(params: ReadResourceRequest['params']): Promise<ReadResourceResult>;
+  subscribeResource(params: SubscribeRequest['params']): Promise<EmptyResult>;
+  unsubscribeResource(params: UnsubscribeRequest['params']): Promise<EmptyResult>;
   close(): Promise<void>;
+}
+
+export interface UpstreamMcpNotificationHandlers {
+  onToolListChanged?: () => Promise<void> | void;
+  onPromptListChanged?: () => Promise<void> | void;
+  onResourceListChanged?: () => Promise<void> | void;
+  onResourceUpdated?: (params: ResourceUpdatedNotification['params']) => Promise<void> | void;
 }
 
 export type UpstreamToolClient = UpstreamMcpClient;
@@ -96,11 +117,25 @@ export class StdioUpstreamMcpClient implements UpstreamMcpClient {
 
   private readonly transport: StdioClientTransport;
   private connected = false;
+  private notificationHandlers: UpstreamMcpNotificationHandlers = {};
 
   constructor(server: StdioServerParameters) {
     this.transport = new StdioClientTransport({
       ...server,
       env: normalizeEnv(server.env),
+    });
+
+    this.client.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
+      await this.notificationHandlers.onToolListChanged?.();
+    });
+    this.client.setNotificationHandler(PromptListChangedNotificationSchema, async () => {
+      await this.notificationHandlers.onPromptListChanged?.();
+    });
+    this.client.setNotificationHandler(ResourceListChangedNotificationSchema, async () => {
+      await this.notificationHandlers.onResourceListChanged?.();
+    });
+    this.client.setNotificationHandler(ResourceUpdatedNotificationSchema, async (notification) => {
+      await this.notificationHandlers.onResourceUpdated?.(notification.params);
     });
   }
 
@@ -115,6 +150,13 @@ export class StdioUpstreamMcpClient implements UpstreamMcpClient {
 
   getServerCapabilities(): ServerCapabilities | undefined {
     return this.client.getServerCapabilities();
+  }
+
+  setNotificationHandlers(handlers: UpstreamMcpNotificationHandlers): void {
+    this.notificationHandlers = {
+      ...this.notificationHandlers,
+      ...handlers,
+    };
   }
 
   async listTools(params?: ListToolsRequest['params']): Promise<ListToolsResult> {
@@ -147,6 +189,16 @@ export class StdioUpstreamMcpClient implements UpstreamMcpClient {
   async readResource(params: ReadResourceRequest['params']): Promise<ReadResourceResult> {
     await this.connect();
     return this.client.readResource(params);
+  }
+
+  async subscribeResource(params: SubscribeRequest['params']): Promise<EmptyResult> {
+    await this.connect();
+    return this.client.subscribeResource(params);
+  }
+
+  async unsubscribeResource(params: UnsubscribeRequest['params']): Promise<EmptyResult> {
+    await this.connect();
+    return this.client.unsubscribeResource(params);
   }
 
   async callTool(call: ToolCallContext): Promise<ToolCallResult> {
@@ -182,6 +234,7 @@ export interface ReceiptsProxyServerOptions {
 export class TransparentToolProxyServer {
   private serverInstance?: Server;
   private readonly shim: ReceiptingShim;
+  private readonly activeResourceSubscriptions = new Set<string>();
   private readonly serverInfo: {
     name: string;
     version: string;
@@ -207,6 +260,45 @@ export class TransparentToolProxyServer {
     };
     this.serverOptions = options.serverOptions ?? {};
     this.shim = new ReceiptingShim(this.config, (call) => this.upstream.callTool(call), options.sinks);
+    this.upstream.setNotificationHandlers({
+      onToolListChanged: async () => this.forwardToolListChanged(),
+      onPromptListChanged: async () => this.forwardPromptListChanged(),
+      onResourceListChanged: async () => this.forwardResourceListChanged(),
+      onResourceUpdated: async (params) => this.forwardResourceUpdated(params),
+    });
+  }
+
+  private async sendIfConnected(send: (server: Server) => Promise<void>): Promise<void> {
+    const server = this.serverInstance;
+    if (!server?.transport) {
+      return;
+    }
+
+    try {
+      await send(server);
+    } catch {
+      // Ignore notification forwarding failures during disconnect races.
+    }
+  }
+
+  private async forwardToolListChanged(): Promise<void> {
+    await this.sendIfConnected((server) => server.sendToolListChanged());
+  }
+
+  private async forwardPromptListChanged(): Promise<void> {
+    await this.sendIfConnected((server) => server.sendPromptListChanged());
+  }
+
+  private async forwardResourceListChanged(): Promise<void> {
+    await this.sendIfConnected((server) => server.sendResourceListChanged());
+  }
+
+  private async forwardResourceUpdated(params: ResourceUpdatedNotification['params']): Promise<void> {
+    if (!this.activeResourceSubscriptions.has(params.uri)) {
+      return;
+    }
+
+    await this.sendIfConnected((server) => server.sendResourceUpdated(params));
   }
 
   private createServerCapabilities(upstreamCapabilities?: ServerCapabilities): ServerCapabilities {
@@ -227,7 +319,7 @@ export class TransparentToolProxyServer {
     if (upstreamCapabilities?.resources) {
       capabilities.resources = {
         listChanged: upstreamCapabilities.resources.listChanged ?? false,
-        subscribe: false,
+        subscribe: upstreamCapabilities.resources.subscribe ?? false,
       };
     }
 
@@ -271,6 +363,19 @@ export class TransparentToolProxyServer {
         this.upstream.listResourceTemplates(request.params),
       );
       server.setRequestHandler(ReadResourceRequestSchema, async (request) => this.upstream.readResource(request.params));
+
+      if (capabilities.resources.subscribe) {
+        server.setRequestHandler(SubscribeRequestSchema, async (request) => {
+          const result = await this.upstream.subscribeResource(request.params);
+          this.activeResourceSubscriptions.add(request.params.uri);
+          return EmptyResultSchema.parse(result);
+        });
+        server.setRequestHandler(UnsubscribeRequestSchema, async (request) => {
+          const result = await this.upstream.unsubscribeResource(request.params);
+          this.activeResourceSubscriptions.delete(request.params.uri);
+          return EmptyResultSchema.parse(result);
+        });
+      }
     }
 
     return server;
@@ -291,6 +396,7 @@ export class TransparentToolProxyServer {
       this.serverInstance = undefined;
     }
 
+    this.activeResourceSubscriptions.clear();
     await this.upstream.close();
   }
 
