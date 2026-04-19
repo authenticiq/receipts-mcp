@@ -1,0 +1,22 @@
+{
+  "servers": {
+    "receipts-mcp": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/absolute/path/to/receipts-mcp/dist/cli.js"
+      ],
+      "env": {
+        "RECEIPTS_MCP_UPSTREAM_COMMAND": "node",
+        "RECEIPTS_MCP_UPSTREAM_ARGS": "[\"/absolute/path/to/upstream-server.js\"]",
+        "RECEIPTS_MCP_UPSTREAM_CWD": "/absolute/path/to/target-workspace",
+        "RECEIPTS_MCP_SINKS": "stdout,file",
+        "RECEIPTS_MCP_FILE_PATH": "/absolute/path/to/receipts-mcp.receipts.jsonl",
+        "RECEIPTS_MCP_TOOL_SERVER": "upstream-server",
+        "RECEIPTS_MCP_ACTOR_ID": "agent:vscode",
+        "RECEIPTS_MCP_ACTOR_MODEL": "vscode-chat",
+        "RECEIPTS_MCP_KEY_ID": "vscode-dev"
+      }
+    }
+  }
+}

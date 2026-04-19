@@ -121,7 +121,13 @@ Still pending:
 
 - Streamable HTTP transport support
 - broader notification coverage beyond list-change and resource-updated events
-- additional client config packs and demos beyond Claude Desktop
+- additional client config packs and demos beyond Claude Desktop, Cursor, and VS Code
+
+Current local-development client packs:
+
+- Claude Desktop
+- Cursor
+- VS Code
 
 The split between receipt core and transport wiring is still useful:
 
