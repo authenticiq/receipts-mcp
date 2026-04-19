@@ -1,0 +1,13 @@
+{
+  "model": "o4-mini-deep-research",
+  "input": "Use the receipts-mcp server to answer the question with its upstream tools.",
+  "tools": [
+    {
+      "type": "mcp",
+      "server_label": "receipts-mcp",
+      "server_description": "Signed receipting proxy for upstream MCP tool traffic.",
+      "server_url": "https://your-domain.example/mcp",
+      "require_approval": "never"
+    }
+  ]
+}
