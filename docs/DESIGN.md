@@ -121,13 +121,20 @@ Still pending:
 
 - Streamable HTTP transport support
 - broader notification coverage beyond list-change and resource-updated events
-- additional client config packs and demos beyond Claude Desktop, Cursor, and VS Code
+- additional client config packs and demos beyond Claude Desktop, Cursor, VS Code, Claude Code, and the OpenAI developer or ChatGPT remote pack
 
 Current local-development client packs:
 
 - Claude Desktop
 - Cursor
 - VS Code
+- Claude Code
+
+Current remote-target developer pack:
+
+- OpenAI developer or ChatGPT MCP integration, documented against OpenAI's remote MCP tool surface and blocked on remote transport support in `receipts-mcp`
+
+The OpenAI developer or ChatGPT pack is intentionally documented as a deployment target rather than a drop-in local config. OpenAI's current MCP support is remote-server oriented and expects a public HTTP or SSE endpoint, while `receipts-mcp` currently ships only a local stdio transport.
 
 The split between receipt core and transport wiring is still useful:
 
