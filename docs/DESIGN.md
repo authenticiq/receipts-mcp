@@ -80,12 +80,22 @@ The `git` sink is intentionally simple in the internal build. It writes append-o
 
 ## Transport integration status
 
-The MCP SDK transport wiring is the next implementation layer after this core.
+The internal build now includes a real stdio-based forwarding path:
 
-The current internal build does not yet proxy stdio or Streamable HTTP end-to-end. Instead, it exposes a transport-neutral shim core that can be wrapped by the MCP SDK once the forwarding layer is added.
+- `StdioUpstreamMcpClient` spawns and connects to an upstream MCP server over stdio
+- `TransparentToolProxyServer` exposes `tools/list` and `tools/call` through a local proxy server while emitting receipts for each upstream call
+- `src/cli.ts` starts the proxy from environment configuration for local development
 
-That separation is intentional:
+This is intentionally a narrow first transport slice.
 
-- it keeps the receipt contract logic small and testable
-- it avoids mixing transport concerns with signing logic
+Still pending:
+
+- Streamable HTTP transport support
+- prompt and resource forwarding beyond the tool surface
+- release-grade client config packs and demos
+
+The split between receipt core and transport wiring is still useful:
+
+- it keeps the receipt contract logic testable without transport noise
+- it allows stdio to land before the broader transport matrix
 - it makes contract validation against `agent-receipts` easier during early development

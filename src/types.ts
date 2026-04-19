@@ -91,8 +91,8 @@ export interface ToolCallContext {
 }
 
 export interface ToolCallResult {
-  content?: JsonValue;
-  structuredContent?: JsonValue;
+  content?: unknown;
+  structuredContent?: unknown;
   isError?: boolean;
   [key: string]: unknown;
 }
