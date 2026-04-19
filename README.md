@@ -4,16 +4,17 @@ MCP middleware that emits signed receipts for every tool call.
 
 ## Status
 
-This repository is in active internal build. The transport-facing MCP shim is still in progress, but the receipt emission core has now landed for local development.
+This repository is in active internal build. The first stdio-based MCP shim path has landed for local development, with broader transport and client-pack work still in progress.
 
 Current internal surface:
 - deterministic input and output hashing for receipt payloads
 - ML-DSA-87 signing aligned to `agent-receipts/v1`
 - stdout, file, HTTP, and local git sinks
-- a transport-agnostic shim core ready for MCP SDK wiring
+- stdio upstream forwarding via the MCP TypeScript SDK
+- a transparent tool proxy server for `tools/list` and `tools/call`
 
 Still in progress:
-- transparent MCP forwarding transport
+- broader MCP transport coverage beyond stdio
 - client integration packs and demos
 - end-to-end verification against released `agent-receipts` JS bindings
 
