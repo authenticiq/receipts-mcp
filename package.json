@@ -1,0 +1,34 @@
+{
+  "name": "receipts-mcp",
+  "version": "0.1.0-internal.0",
+  "description": "MCP middleware core that emits signed receipts for tool calls.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run build && npm run test"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "@noble/post-quantum": "0.6.1",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  }
+}
