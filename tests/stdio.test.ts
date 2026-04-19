@@ -7,6 +7,12 @@ import { promisify } from 'node:util';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import {
+  PromptListChangedNotificationSchema,
+  ResourceListChangedNotificationSchema,
+  ResourceUpdatedNotificationSchema,
+  ToolListChangedNotificationSchema,
+} from '@modelcontextprotocol/sdk/types.js';
 import { describe, expect, it } from 'vitest';
 
 import { ReceiptingShim } from '../src/server.js';
@@ -23,6 +29,21 @@ class MemoryReceiptSink implements ReceiptSink {
   async write(receipt: Receipt): Promise<void> {
     this.receipts.push(receipt);
   }
+}
+
+function createDeferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+
+  return {
+    promise,
+    resolve,
+    reject,
+  };
 }
 
 function createTestConfig(): ReceiptsMcpConfig {
@@ -73,6 +94,7 @@ describe('stdio forwarding', () => {
       expect(capabilities?.tools).toBeDefined();
       expect(capabilities?.prompts).toBeDefined();
       expect(capabilities?.resources).toBeDefined();
+      expect(capabilities?.resources?.subscribe).toBe(true);
 
       const tools = await upstream.listTools();
       expect(tools.tools.map((tool) => tool.name)).toContain('echo');
@@ -151,7 +173,7 @@ describe('stdio forwarding', () => {
       expect(capabilities?.prompts).toBeDefined();
       expect(capabilities?.resources).toEqual(
         expect.objectContaining({
-          subscribe: false,
+          subscribe: true,
         }),
       );
 
@@ -203,6 +225,110 @@ describe('stdio forwarding', () => {
       });
       expect(sink.receipts).toHaveLength(1);
       expect(sink.receipts[0]?.payload.tool.name).toBe('echo');
+    } finally {
+      await client.close();
+      await proxy.close();
+    }
+  });
+
+  it('forwards resource subscriptions and upstream notifications through the transparent server', async () => {
+    const upstream = new StdioUpstreamMcpClient({
+      command: process.execPath,
+      args: [fixturePath],
+      cwd: dirname(fixturePath),
+      stderr: 'pipe',
+    });
+    const sink = new MemoryReceiptSink();
+    const config = createTestConfig();
+    const proxy = new TransparentToolProxyServer(config, upstream, {
+      sinks: [sink],
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const toolListChanged = createDeferred<void>();
+    const promptListChanged = createDeferred<void>();
+    const resourceListChanged = createDeferred<void>();
+    const firstResourceUpdate = createDeferred<string>();
+    const resourceUpdates: string[] = [];
+    const client = new Client({
+      name: 'receipts-mcp-test-client',
+      version: '1.0.0',
+    });
+
+    client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
+      toolListChanged.resolve();
+    });
+    client.setNotificationHandler(PromptListChangedNotificationSchema, () => {
+      promptListChanged.resolve();
+    });
+    client.setNotificationHandler(ResourceListChangedNotificationSchema, () => {
+      resourceListChanged.resolve();
+    });
+    client.setNotificationHandler(ResourceUpdatedNotificationSchema, (notification) => {
+      resourceUpdates.push(notification.params.uri);
+      if (resourceUpdates.length === 1) {
+        firstResourceUpdate.resolve(notification.params.uri);
+      }
+    });
+
+    try {
+      await proxy.connect(serverTransport);
+      await client.connect(clientTransport);
+
+      expect(client.getServerCapabilities()?.resources).toEqual(
+        expect.objectContaining({
+          subscribe: true,
+        }),
+      );
+
+      await client.subscribeResource({
+        uri: 'memo:///notes/watch',
+      });
+
+      const listChangeResult = await client.callTool({
+        name: 'trigger-list-changes',
+      });
+      expect(listChangeResult.structuredContent).toEqual({
+        emitted: true,
+      });
+
+      await Promise.all([
+        toolListChanged.promise,
+        promptListChanged.promise,
+        resourceListChanged.promise,
+      ]);
+
+      const firstUpdateResult = await client.callTool({
+        name: 'trigger-resource-update',
+        arguments: {
+          uri: 'memo:///notes/watch',
+        },
+      });
+      expect(firstUpdateResult.structuredContent).toEqual({
+        notified: true,
+        uri: 'memo:///notes/watch',
+      });
+
+      await expect(firstResourceUpdate.promise).resolves.toBe('memo:///notes/watch');
+      expect(resourceUpdates).toEqual(['memo:///notes/watch']);
+
+      await client.unsubscribeResource({
+        uri: 'memo:///notes/watch',
+      });
+
+      const secondUpdateResult = await client.callTool({
+        name: 'trigger-resource-update',
+        arguments: {
+          uri: 'memo:///notes/watch',
+        },
+      });
+      expect(secondUpdateResult.structuredContent).toEqual({
+        notified: false,
+        uri: 'memo:///notes/watch',
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(resourceUpdates).toEqual(['memo:///notes/watch']);
+      expect(sink.receipts).toHaveLength(3);
     } finally {
       await client.close();
       await proxy.close();

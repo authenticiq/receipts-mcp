@@ -46,8 +46,21 @@ The current forwarding layer also passes through the non-tool surfaces that comm
 - `resources/list`
 - `resources/templates/list`
 - `resources/read`
+- `resources/subscribe`
+- `resources/unsubscribe`
 
 These requests do not currently emit receipts. That keeps the signing contract narrowly scoped to the initial audit target, while still allowing the proxy to front more complete MCP servers during integration.
+
+## Forwarded notifications
+
+The current proxy also forwards the small notification surface needed to keep stdio clients coherent when the upstream server changes underneath them:
+
+- `notifications/tools/list_changed`
+- `notifications/prompts/list_changed`
+- `notifications/resources/list_changed`
+- `notifications/resources/updated`
+
+Resource-updated notifications are only forwarded for URIs the downstream client subscribed to through the proxy.
 
 ## Core interfaces
 
@@ -99,7 +112,7 @@ The `git` sink is intentionally simple in the internal build. It writes append-o
 The internal build now includes a real stdio-based forwarding path:
 
 - `StdioUpstreamMcpClient` spawns and connects to an upstream MCP server over stdio
-- `TransparentToolProxyServer` exposes tools, prompts, and resource read/list surfaces through a local proxy server while emitting receipts for upstream tool calls
+- `TransparentToolProxyServer` exposes tools, prompts, resource read/list/subscribe surfaces, and forwards list/resource notifications while emitting receipts for upstream tool calls
 - `src/cli.ts` starts the proxy from environment configuration for local development
 
 This is intentionally a narrow first transport slice.
@@ -107,8 +120,8 @@ This is intentionally a narrow first transport slice.
 Still pending:
 
 - Streamable HTTP transport support
-- resource subscription forwarding and broader notification coverage
-- release-grade client config packs and demos
+- broader notification coverage beyond list-change and resource-updated events
+- additional client config packs and demos beyond Claude Desktop
 
 The split between receipt core and transport wiring is still useful:
 
